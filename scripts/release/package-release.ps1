@@ -66,7 +66,13 @@ try {
     $compose = [IO.File]::ReadAllText((Join-Path $RepoRoot 'docker\docker-compose.prod.yml'), [Text.Encoding]::UTF8)
     if ($compose -notmatch '__BROWSEKIT_VERSION__') { throw 'docker-compose.prod.yml is missing the version placeholder' }
     $compose = $compose.Replace('__BROWSEKIT_VERSION__', $Version.ToLower())
-    if ($compose -match 'chrome-profile') { throw 'prod compose references chrome-profile' }
+    $mounted = $false
+    foreach ($line in ($compose -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('#')) { continue }
+        if ($trimmed -match 'chrome-profile') { $mounted = $true }
+    }
+    if ($mounted) { throw 'prod compose mounts chrome-profile' }
     [IO.File]::WriteAllText((Join-Path $stage 'docker\docker-compose.yml'), $compose, (New-Object Text.UTF8Encoding $false))
     Copy-Item (Join-Path $RepoRoot 'docker\mcpo-config.json') (Join-Path $stage 'docker\mcpo-config.json')
     Copy-Item (Join-Path $RepoRoot 'docker\tools\Dockerfile') (Join-Path $stage 'docker\tools\Dockerfile')
