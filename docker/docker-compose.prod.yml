@@ -1,0 +1,68 @@
+# 018-BrowseKit 生产编排模板（导出时复制为版本目录下的 docker/docker-compose.yml）
+# 约束：
+#   - 全部服务显式 restart: "no"（不做开机自启，由 启动BrowseKit.bat 手动拉起）
+#   - Open WebUI 数据卷复用既有外部卷 browsekit-open-webui-data（账号/模型/历史零丢失）
+#   - 工具容器只挂 ../../data/workspace 与只读 config，绝不挂 .env / chrome-profile
+name: browsekit-prod
+
+services:
+  browsekit-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: browsekit-webui
+    restart: "no"
+    ports:
+      - "127.0.0.1:3000:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - ../../data/.env
+    volumes:
+      - open-webui-data:/app/backend/data
+    networks:
+      - browsekit-net
+
+  browsekit-tools:
+    build:
+      context: ./tools
+      dockerfile: Dockerfile
+    image: browsekit-tools:__BROWSEKIT_VERSION__
+    container_name: browsekit-tools
+    restart: "no"
+    ports:
+      - "127.0.0.1:8932:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - ../../data/.env
+    volumes:
+      - ../../data/workspace:/workspace
+      - ./mcpo-config.json:/app/config.json:ro
+      - npm-cache:/root/.npm
+      - uv-cache:/root/.cache/uv
+    command:
+      - "--config"
+      - "/app/config.json"
+      - "--api-key"
+      - "${MCPO_API_KEY}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    networks:
+      - browsekit-net
+
+networks:
+  browsekit-net:
+    name: browsekit-net
+    driver: bridge
+
+volumes:
+  open-webui-data:
+    external: true
+    name: browsekit-open-webui-data
+  npm-cache:
+    external: true
+    name: browsekit-npm-cache
+  uv-cache:
+    external: true
+    name: browsekit-uv-cache

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/workspace"
+      ]
+    },
+    "markitdown": {
+      "command": "/opt/doc-mcp-venv/bin/python",
+      "args": [
+        "/opt/doc-mcp/server.py"
+      ]
+    }
+  }
+}

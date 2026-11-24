@@ -1,0 +1,30 @@
+# 浏览器登录态（含 Cookie）。生产目录必须留在原地，且不得入库。
+chrome-profile/
+chrome-profile-*
+chrome-profile-*/
+
+# 任务报告、收件箱、开发工作区与槽位工作区。标准模板在 /templates。
+workspace/
+workspace-*
+workspace-*/
+workspace-dev/
+workspace-slot*/
+
+# 运行状态、日志与临时产物
+.run/
+.run-*
+.run-*/
+*.log
+*.pid
+
+# 密钥与本地环境文件
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# 依赖与缓存
+node_modules/
+**/__pycache__/
+*.pyc
+mcp-host/.playwright-mcp/

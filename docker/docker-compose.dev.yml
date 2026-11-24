@@ -1,0 +1,62 @@
+# 018-BrowseKit 开发编排。与生产 compose 分离：
+# 容器名、项目名、端口、数据卷、工作区都不复用生产资源。
+name: browsekit-dev
+
+services:
+  browsekit-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: browsekit-webui-dev
+    restart: "no"
+    ports:
+      - "127.0.0.1:3010:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    volumes:
+      - browsekit-open-webui-data-dev:/app/backend/data
+    networks:
+      - browsekit-net-dev
+
+  browsekit-tools:
+    build:
+      context: ./tools
+      dockerfile: Dockerfile
+    image: browsekit-tools:dev
+    container_name: browsekit-tools-dev
+    restart: "no"
+    ports:
+      - "127.0.0.1:8942:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    volumes:
+      - ../workspace-dev:/workspace
+      - ./mcpo-config.json:/app/config.json:ro
+      - browsekit-npm-cache-dev:/root/.npm
+      - browsekit-uv-cache-dev:/root/.cache/uv
+    command:
+      - "--config"
+      - "/app/config.json"
+      - "--api-key"
+      - "${MCPO_API_KEY}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    networks:
+      - browsekit-net-dev
+
+networks:
+  browsekit-net-dev:
+    name: browsekit-net-dev
+    driver: bridge
+
+volumes:
+  browsekit-open-webui-data-dev:
+    name: browsekit-open-webui-data-dev
+  browsekit-npm-cache-dev:
+    name: browsekit-npm-cache-dev
+  browsekit-uv-cache-dev:
+    name: browsekit-uv-cache-dev
