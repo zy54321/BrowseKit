@@ -68,7 +68,7 @@ Assert-BrowseKitDevPorts -Ports $layout.Ports
 
 if ($Command -eq 'stop') {
     & (Join-Path $PSScriptRoot 'Stop-BrowseKitHost.ps1') -RunDir $layout.RunDir
-    $n = Stop-BrowseKitChromeByProfile -ProfileDir $layout.ProfileDir
+    $n = Stop-BrowseKitChromeByProfile -ProfileDir $layout.ProfileDir -DebugPort $layout.Ports.Cdp
     Write-Host ('槽位 ' + $Slot + ' 已停止。结束的 Chrome 进程数：' + $n)
     exit 0
 }

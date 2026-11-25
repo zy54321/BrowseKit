@@ -46,33 +46,82 @@ function Test-BrowseKitProfileCommandLine {
     if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($ProfileDir)) { return $false }
     $norm = [System.IO.Path]::GetFullPath($ProfileDir).TrimEnd('\')
     $cmd = $CommandLine.Replace('/', '\')
-    $idx = $cmd.IndexOf($norm, [System.StringComparison]::OrdinalIgnoreCase)
-    while ($idx -ge 0) {
-        $after = $idx + $norm.Length
-        if ($after -ge $cmd.Length) { return $true }
-        $ch = $cmd[$after]
-        if ($ch -eq '"' -or $ch -eq "'" -or [char]::IsWhiteSpace($ch)) { return $true }
-        $idx = $cmd.IndexOf($norm, $after, [System.StringComparison]::OrdinalIgnoreCase)
+    foreach ($marker in @(
+            ('--user-data-dir="' + $norm + '"'),
+            ("--user-data-dir='" + $norm + "'"),
+            ('--user-data-dir=' + $norm)
+        )) {
+        $idx = $cmd.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase)
+        while ($idx -ge 0) {
+            $after = $idx + $marker.Length
+            $quoted = $marker.EndsWith('"') -or $marker.EndsWith("'")
+            if ($quoted -or $after -ge $cmd.Length) { return $true }
+            $ch = $cmd[$after]
+            if ($ch -eq '"' -or $ch -eq "'" -or [char]::IsWhiteSpace($ch)) { return $true }
+            $idx = $cmd.IndexOf($marker, $after, [System.StringComparison]::OrdinalIgnoreCase)
+        }
     }
     return $false
 }
 
+function Test-BrowseKitDedicatedCommandLine {
+    param([string]$CommandLine, [string]$ProfileDir, [int]$DebugPort)
+    if ($DebugPort -le 0) { return $false }
+    if (-not (Test-BrowseKitProfileCommandLine -CommandLine $CommandLine -ProfileDir $ProfileDir)) { return $false }
+    $cmd = $CommandLine.Replace('/', '\')
+    $token = '--remote-debugging-port=' + $DebugPort
+    $idx = $cmd.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase)
+    if ($idx -lt 0) { return $false }
+    $after = $idx + $token.Length
+    if ($after -lt $cmd.Length) {
+        $ch = $cmd[$after]
+        if ($ch -ge '0' -and $ch -le '9') { return $false }
+    }
+    return $true
+}
+
 function Get-BrowseKitChromeProcessIds {
-    param([Parameter(Mandatory = $true)][string]$ProfileDir)
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [int]$DebugPort = 8933
+    )
+    $all = @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue)
+    $roots = New-Object System.Collections.Generic.List[int]
+    foreach ($proc in $all) {
+        $cmd = [string]$proc.CommandLine
+        if ($cmd -match '(?i)(^|\s)--type=') { continue }
+        if (Test-BrowseKitDedicatedCommandLine -CommandLine $cmd -ProfileDir $ProfileDir -DebugPort $DebugPort) {
+            $roots.Add([int]$proc.ProcessId)
+        }
+    }
     $ids = New-Object System.Collections.Generic.List[int]
-    $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue)
-    foreach ($proc in $procs) {
-        if (Test-BrowseKitProfileCommandLine -CommandLine ([string]$proc.CommandLine) -ProfileDir $ProfileDir) {
-            $ids.Add([int]$proc.ProcessId)
+    foreach ($id in $roots) { $ids.Add($id) }
+    $guard = 0
+    $changed = $true
+    while ($changed -and $guard -lt 20) {
+        $guard++
+        $changed = $false
+        foreach ($proc in $all) {
+            $id = [int]$proc.ProcessId
+            if ($ids.Contains($id)) { continue }
+            if (-not $ids.Contains([int]$proc.ParentProcessId)) { continue }
+            $cmd = [string]$proc.CommandLine
+            if ($cmd -match '(?i)\\Google\\Chrome\\User Data') { continue }
+            if (-not (Test-BrowseKitProfileCommandLine -CommandLine $cmd -ProfileDir $ProfileDir)) { continue }
+            $ids.Add($id)
+            $changed = $true
         }
     }
     Write-Output -NoEnumerate $ids
 }
 
 function Get-BrowseKitChromeMainWindow {
-    param([Parameter(Mandatory = $true)][string]$ProfileDir)
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [int]$DebugPort = 8933
+    )
     Import-BrowseKitShell | Out-Null
-    $ids = Get-BrowseKitChromeProcessIds -ProfileDir $ProfileDir
+    $ids = Get-BrowseKitChromeProcessIds -ProfileDir $ProfileDir -DebugPort $DebugPort
     if ($null -eq $ids -or $ids.Count -eq 0) {
         Write-Output -NoEnumerate ([int64]0)
         return
@@ -88,11 +137,12 @@ function Get-BrowseKitChromeMainWindow {
 function Wait-BrowseKitChromeWindow {
     param(
         [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [int]$DebugPort = 8933,
         [int]$TimeoutSec = 20
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     do {
-        $hwnd = [int64](Get-BrowseKitChromeMainWindow -ProfileDir $ProfileDir)
+        $hwnd = [int64](Get-BrowseKitChromeMainWindow -ProfileDir $ProfileDir -DebugPort $DebugPort)
         if ($hwnd -ne 0) { return $hwnd }
         Start-Sleep -Milliseconds 300
     } while ((Get-Date) -lt $deadline)
@@ -100,9 +150,12 @@ function Wait-BrowseKitChromeWindow {
 }
 
 function Move-BrowseKitChromeToSecondDesktop {
-    param([Parameter(Mandatory = $true)][string]$ProfileDir)
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [int]$DebugPort = 8933
+    )
     Import-BrowseKitShell
-    $hwnd = [int64](Wait-BrowseKitChromeWindow -ProfileDir $ProfileDir -TimeoutSec 20)
+    $hwnd = [int64](Wait-BrowseKitChromeWindow -ProfileDir $ProfileDir -DebugPort $DebugPort -TimeoutSec 20)
     if ($hwnd -eq 0) {
         Write-Warning '未找到专用 Chrome 主窗口，跳过送入第 2 桌面。'
         return $false

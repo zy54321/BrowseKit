@@ -71,10 +71,12 @@ foreach ($p in @($ComposeFile, $EnvFile)) {
 if (-not (Test-Path -LiteralPath $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
 
 # ---------------------------------------------------------------- 1) Chrome
+$chromeFreshStart = $false
 if (-not $SkipChrome) {
     if (Test-TcpPort -Port $CdpPort) {
-        Write-Host ('[1/3] Chrome 调试端口 ' + $CdpPort + ' 已开放，跳过启动') -ForegroundColor Yellow
+        Write-Host ('[1/3] Chrome 调试端口 ' + $CdpPort + ' 已开放，跳过启动和窗口前置') -ForegroundColor Yellow
     } else {
+        $chromeFreshStart = $true
         Write-Host '[1/3] 启动专用 Chrome ...' -ForegroundColor Cyan
         $defaultDir = Join-Path $ProfileDir 'Default'
         if (-not (Test-Path -LiteralPath $defaultDir)) { New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null }
@@ -98,7 +100,11 @@ if (-not $SkipChrome) {
         [System.IO.File]::WriteAllText($PrefsPath, (ConvertTo-Json -InputObject $prefs -Depth 32), (New-Object System.Text.UTF8Encoding($false)))
 
         $argLine = '--user-data-dir="' + $ProfileDir + '" --remote-debugging-port=' + $CdpPort + ' --no-first-run --no-default-browser-check'
-        Start-Process -FilePath $ChromeExe -ArgumentList $argLine | Out-Null
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $ChromeExe
+        $startInfo.Arguments = $argLine
+        $startInfo.UseShellExecute = $false
+        [void][System.Diagnostics.Process]::Start($startInfo)
 
         $deadline = (Get-Date).AddSeconds(20)
         while ((Get-Date) -lt $deadline -and -not (Test-TcpPort -Port $CdpPort)) { Start-Sleep -Milliseconds 500 }
@@ -108,9 +114,9 @@ if (-not $SkipChrome) {
     $desk = Join-Path $ScriptDir 'tools\BrowseKit.Desktop.ps1'
     if (Test-Path -LiteralPath $desk) {
         try { . $desk } catch { Write-Warning ('加载桌面隔离组件失败：' + $_.Exception.Message) }
-        if (Get-Command Move-BrowseKitChromeToSecondDesktop -ErrorAction SilentlyContinue) {
+        if ($chromeFreshStart -and (Get-Command Move-BrowseKitChromeToSecondDesktop -ErrorAction SilentlyContinue)) {
             try {
-                Move-BrowseKitChromeToSecondDesktop -ProfileDir $ProfileDir | Out-Null
+                Move-BrowseKitChromeToSecondDesktop -ProfileDir $ProfileDir -DebugPort $CdpPort | Out-Null
             } catch {
                 Write-Warning ('送入第 2 虚拟桌面失败：' + $_.Exception.Message + '。可稍后用托盘或 Win+Ctrl+→。')
             }

@@ -89,7 +89,7 @@ if ($Action -eq 'down') {
         } finally { Pop-Location }
     }
     Write-Host '[3/3] 关闭开发专用 Chrome ...' -ForegroundColor Cyan
-    $n = Stop-BrowseKitChromeByProfile -ProfileDir $ProfileDir
+    $n = Stop-BrowseKitChromeByProfile -ProfileDir $ProfileDir -DebugPort $Ports.Cdp
     Write-Host ('    已结束开发 Chrome 进程数：' + $n)
     Write-Host 'DEV_DOWN_OK'
     exit 0

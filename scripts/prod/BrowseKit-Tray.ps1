@@ -25,6 +25,7 @@ using System.Runtime.InteropServices;
 public static class BrowseKitConsoleHide {
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
 '@
 }
@@ -132,11 +133,18 @@ function Invoke-BrowseKitToggle {
     if ($script:busy -or $script:closing) { return }
     $script:busy = $true
     try {
-        $hwnd = [int64](Get-BrowseKitChromeMainWindow -ProfileDir $script:ProfileNorm)
+        $hwnd = [int64](Get-BrowseKitChromeMainWindow -ProfileDir $script:ProfileNorm -DebugPort 8933)
         $script:LastHwnd = $hwnd
         if ($hwnd -eq 0) {
             Show-BrowseKitBalloon -Title 'BrowseKit' -Message '未找到专用 Chrome 窗口。请先启动 BrowseKit。日常办公 Chrome 不会被操作。'
             Update-BrowseKitTrayTip
+            return
+        }
+        $ownerPid = [uint32]0
+        [void][BrowseKitConsoleHide]::GetWindowThreadProcessId(([IntPtr]$hwnd), [ref]$ownerPid)
+        $allowed = @(Get-BrowseKitChromeProcessIds -ProfileDir $script:ProfileNorm -DebugPort 8933)
+        if ($allowed -notcontains [int]$ownerPid) {
+            Show-BrowseKitBalloon -Title 'BrowseKit' -Message '窗口不属于专用 Chrome，已放弃操作。日常浏览器不会被切换或关闭。'
             return
         }
         $on = $false

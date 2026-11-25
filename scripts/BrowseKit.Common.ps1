@@ -58,31 +58,100 @@ function Test-BrowseKitProfileCommandLine {
     if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($ProfileDir)) { return $false }
     $norm = [System.IO.Path]::GetFullPath($ProfileDir).TrimEnd('\')
     $cmd = $CommandLine.Replace('/', '\')
-    $idx = $cmd.IndexOf($norm, [System.StringComparison]::OrdinalIgnoreCase)
-    while ($idx -ge 0) {
-        $after = $idx + $norm.Length
-        if ($after -ge $cmd.Length) { return $true }
-        $ch = $cmd[$after]
-        if ($ch -eq '"' -or $ch -eq "'" -or [char]::IsWhiteSpace($ch)) { return $true }
-        $idx = $cmd.IndexOf($norm, $after, [System.StringComparison]::OrdinalIgnoreCase)
+    foreach ($marker in @(
+            ('--user-data-dir="' + $norm + '"'),
+            ("--user-data-dir='" + $norm + "'"),
+            ('--user-data-dir=' + $norm)
+        )) {
+        $idx = $cmd.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase)
+        while ($idx -ge 0) {
+            $after = $idx + $marker.Length
+            $quoted = $marker.EndsWith('"') -or $marker.EndsWith("'")
+            if ($quoted -or $after -ge $cmd.Length) { return $true }
+            $ch = $cmd[$after]
+            if ($ch -eq '"' -or $ch -eq "'" -or [char]::IsWhiteSpace($ch)) { return $true }
+            $idx = $cmd.IndexOf($marker, $after, [System.StringComparison]::OrdinalIgnoreCase)
+        }
     }
     return $false
 }
 
+function Test-BrowseKitDedicatedCommandLine {
+    param([string]$CommandLine, [string]$ProfileDir, [int]$DebugPort)
+    if ($DebugPort -le 0) { return $false }
+    if (-not (Test-BrowseKitProfileCommandLine -CommandLine $CommandLine -ProfileDir $ProfileDir)) { return $false }
+    $cmd = $CommandLine.Replace('/', '\')
+    $token = '--remote-debugging-port=' + $DebugPort
+    $idx = $cmd.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase)
+    if ($idx -lt 0) { return $false }
+    $after = $idx + $token.Length
+    if ($after -lt $cmd.Length) {
+        $ch = $cmd[$after]
+        if ($ch -ge '0' -and $ch -le '9') { return $false }
+    }
+    return $true
+}
+
+function Get-BrowseKitDedicatedChromePids {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [Parameter(Mandatory = $true)][int]$DebugPort
+    )
+    $all = @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue)
+    $roots = New-Object System.Collections.Generic.List[int]
+    foreach ($proc in $all) {
+        $cmd = [string]$proc.CommandLine
+        if ($cmd -match '(?i)(^|\s)--type=') { continue }
+        if (Test-BrowseKitDedicatedCommandLine -CommandLine $cmd -ProfileDir $ProfileDir -DebugPort $DebugPort) {
+            $roots.Add([int]$proc.ProcessId)
+        }
+    }
+    $set = New-Object 'System.Collections.Generic.HashSet[int]'
+    foreach ($id in $roots) { [void]$set.Add($id) }
+    $guard = 0
+    $changed = $true
+    while ($changed -and $guard -lt 20) {
+        $guard++
+        $changed = $false
+        foreach ($proc in $all) {
+            $id = [int]$proc.ProcessId
+            if ($set.Contains($id)) { continue }
+            if (-not $set.Contains([int]$proc.ParentProcessId)) { continue }
+            $cmd = [string]$proc.CommandLine
+            if ($cmd -match '(?i)\\Google\\Chrome\\User Data') { continue }
+            if (-not (Test-BrowseKitProfileCommandLine -CommandLine $cmd -ProfileDir $ProfileDir)) { continue }
+            if ($cmd -match '(?i)--remote-debugging-port=(\d+)' -and [int]$Matches[1] -ne $DebugPort) { continue }
+            [void]$set.Add($id)
+            $changed = $true
+        }
+    }
+    Write-Output -NoEnumerate $set
+}
+
 function Stop-BrowseKitChromeByProfile {
-    param([Parameter(Mandatory = $true)][string]$ProfileDir)
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileDir,
+        [Parameter(Mandatory = $true)][int]$DebugPort
+    )
+    if ($DebugPort -le 0) { throw '结束专用 Chrome 必须同时指定调试端口。' }
     $full = [System.IO.Path]::GetFullPath($ProfileDir).TrimEnd('\')
     $prod = [System.IO.Path]::GetFullPath((Join-Path (Get-BrowseKitRoot) 'chrome-profile')).TrimEnd('\')
     if ($full.Equals($prod, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw '拒绝按配置目录结束生产 Chrome。请手动关闭生产窗口。'
     }
-    $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue)
+    $ids = Get-BrowseKitDedicatedChromePids -ProfileDir $full -DebugPort $DebugPort
     $stopped = 0
-    foreach ($proc in $procs) {
-        if (Test-BrowseKitProfileCommandLine -CommandLine ([string]$proc.CommandLine) -ProfileDir $full) {
-            Stop-Process -Id ([int]$proc.ProcessId) -Force -ErrorAction SilentlyContinue
-            $stopped++
-        }
+    foreach ($id in @($ids)) {
+        $proc = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $id) -ErrorAction SilentlyContinue
+        if (-not $proc) { continue }
+        if ([string]$proc.Name -ne 'chrome.exe') { continue }
+        $cmd = [string]$proc.CommandLine
+        if ($cmd -match '(?i)\\Google\\Chrome\\User Data') { continue }
+        $own = Test-BrowseKitDedicatedCommandLine -CommandLine $cmd -ProfileDir $full -DebugPort $DebugPort
+        $child = (-not $own) -and (Test-BrowseKitProfileCommandLine -CommandLine $cmd -ProfileDir $full) -and $ids.Contains([int]$proc.ParentProcessId)
+        if (-not $own -and -not $child) { continue }
+        Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue
+        $stopped++
     }
     return $stopped
 }

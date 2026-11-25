@@ -6,7 +6,8 @@
 .DESCRIPTION
     - 严格 Windows PowerShell 5.1 语法，不使用 PS7 专有特性（?? / ?. / 三元 / -Parallel）。
     - 端口存活一律使用 System.Net.Sockets.TcpClient 探测，不依赖 netstat。
-    - 仅使用本目录下的 chrome-profile，绝不触碰用户日常 Chrome 配置。
+    - 只认同时带有 --user-data-dir 与 --remote-debugging-port 的专用进程。
+    - 调试端口已在监听时直接返回，不重复启动，也不把窗口拉到前台。
     - 绝不按进程名结束 chrome.exe；本脚本不会 kill 任何进程。
 
 .PARAMETER DebugPort
@@ -95,10 +96,17 @@ Write-Host ('Chrome 可执行文件 : ' + $ChromeExe)
 Write-Host ('专用配置目录      : ' + $ProfileDir)
 Write-Host ('调试端口          : ' + $DebugPort)
 
-# 已在运行则直接回报，不重复启动
+. (Join-Path $PSScriptRoot 'BrowseKit.Common.ps1')
+
+# 已在监听则只做健康回报。不启动新进程，不激活窗口，不结束任何 Chrome。
 if (Test-TcpPort -Port $DebugPort) {
+    $ready = @(Get-BrowseKitDedicatedChromePids -ProfileDir $ProfileDir -DebugPort $DebugPort)
     Write-Host ''
-    Write-Host ('端口 ' + $DebugPort + ' 已开放：调试 Chrome 已在运行，跳过启动。') -ForegroundColor Yellow
+    if ($ready.Count -gt 0) {
+        Write-Host ('端口 ' + $DebugPort + ' 已由专用 Chrome 监听，跳过启动，不抢焦点。') -ForegroundColor Yellow
+    } else {
+        Write-Warning ('端口 ' + $DebugPort + ' 已开放，但不是带有该配置目录和调试端口的专用 Chrome。为避免误伤日常浏览器，本次不启动、不结束进程。')
+    }
     try {
         $info = Get-DebugVersion -Url $VersionUrl
         Show-DebugSummary -Info $info
@@ -108,16 +116,19 @@ if (Test-TcpPort -Port $DebugPort) {
     return
 }
 
-# 检测"同一 profile 已被无调试端口实例占用"的情况：Chrome 单例会把新参数吞掉
-$sameProfile = @()
+$profileBusy = @()
 try {
-    $sameProfile = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $ProfileDir + '*') })
+    $profileBusy = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'chrome.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and
+            ($_.CommandLine -notmatch '(?i)(^|\s)--type=') -and
+            (Test-BrowseKitProfileCommandLine -CommandLine ([string]$_.CommandLine) -ProfileDir $ProfileDir) -and
+            -not (Test-BrowseKitDedicatedCommandLine -CommandLine ([string]$_.CommandLine) -ProfileDir $ProfileDir -DebugPort $DebugPort)
+        })
 } catch { }
-if ($sameProfile.Count -gt 0) {
-    Write-Warning ('检测到已有 Chrome 实例在使用本专用配置目录但未开启调试端口（PID: ' + (($sameProfile | ForEach-Object { $_.ProcessId }) -join ', ') + '）。')
-    Write-Warning 'Chrome 为单例进程，直接重启可能复用旧实例导致调试端口不生效。'
-    Write-Warning '请手动关闭该专用 Chrome 窗口（不影响日常浏览器），然后重新运行本脚本。'
+if ($profileBusy.Count -gt 0) {
+    Write-Warning ('专用配置目录已被没有调试端口的 Chrome 占用（PID: ' + (($profileBusy | ForEach-Object { $_.ProcessId }) -join ', ') + '）。')
+    Write-Warning '本次不启动、不结束进程。请只手动关闭该专用窗口，日常 Chrome 不会被操作。'
     return
 }
 
@@ -180,7 +191,11 @@ $argLine = '--user-data-dir="' + $ProfileDir + '"' +
            ' --no-default-browser-check'
 
 Write-Host ('启动参数 : ' + $argLine)
-Start-Process -FilePath $ChromeExe -ArgumentList $argLine | Out-Null
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = $ChromeExe
+$startInfo.Arguments = $argLine
+$startInfo.UseShellExecute = $false
+[void][System.Diagnostics.Process]::Start($startInfo)
 
 # ---------------------------------------------------------------- 等待就绪
 $deadline  = (Get-Date).AddSeconds($WaitSeconds)
