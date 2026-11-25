@@ -32,6 +32,7 @@ Say '从当前开发目录制作正式 Release。'
 Say '不会安装或升级 Prod。'
 
 . (Join-Path $PSScriptRoot 'confirm-yn.ps1')
+. (Join-Path $RepoRoot 'scripts\release\resolve-release-version.ps1')
 
 $prev = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -68,25 +69,45 @@ if ($remoteSha -ne $head) {
     Fail "本地修订 $head 与 GitHub 分支 $branch 的修订不一致。没有创建版本目录。"
 }
 
+$ProdRoot = 'E:\01_Work\04_Prod\01_Personal\018-BrowseKit'
+$versionInfo = $null
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $versionFile = Join-Path $RepoRoot 'VERSION'
-    if (-not (Test-Path -LiteralPath $versionFile)) { Fail '缺少 VERSION。没有创建版本目录。' }
-    $Version = ([IO.File]::ReadAllText($versionFile)).Trim()
+    try {
+        $versionInfo = Resolve-NextReleaseVersion -RepoRoot $RepoRoot -ReleaseRoot $ReleaseRoot -ProdRoot $ProdRoot
+        $Version = $versionInfo.NextVersion
+    }
+    catch {
+        Fail $_.Exception.Message
+    }
 }
-if ($Version -notmatch '^v\d+\.\d+\.\d+$') {
+elseif ($Version -notmatch '^v\d+\.\d+\.\d+$') {
     Fail "版本号必须是 vX.Y.Z。当前：$Version"
 }
 
-$target = Join-Path $ReleaseRoot $Version
-if (Test-Path -LiteralPath $target) {
-    Fail "Release 目录已存在，不会覆盖：$target"
+try {
+    Test-ReleaseVersionAvailable -Version $Version -ReleaseRoot $ReleaseRoot -ProdRoot $ProdRoot
 }
+catch {
+    Fail $_.Exception.Message
+}
+
+if ($null -eq $versionInfo) {
+    $versionInfo = [pscustomobject]@{
+        LatestVersion = '参数指定'
+        NextVersion = $Version
+        VersionSource = '参数指定'
+    }
+}
+
+$target = Join-Path $ReleaseRoot $Version
 
 Write-Host '================================'
 Write-Host 'BrowseKit Release'
 Write-Host '================================'
 Write-Host ''
-Write-Host "本次计划发布版本：$Version"
+Write-Host ("已有最新版本：{0}" -f $versionInfo.LatestVersion)
+Write-Host ("本次计划发布版本：{0}" -f $Version)
+Write-Host ("版本来源：{0}" -f $versionInfo.VersionSource)
 Write-Host '版本检查：通过'
 Write-Host '重复版本检查：通过'
 Write-Host ''
@@ -101,7 +122,7 @@ Say '影响范围：只打包正式 Release，不会安装或升级 Prod。'
 Say '不会读取或复制 chrome-profile、workspace 任务数据、.run 或 .env。'
 
 if (-not $NonInteractive) {
-    if (-not (Confirm-YesNo -Prompt 'YES-RELEASE (Y/N):')) {
+    if (-not (Confirm-YesNo -Prompt '制作 Release (Y/N):')) {
         Say '已取消。没有创建版本目录。'
         exit 0
     }
@@ -114,6 +135,13 @@ elseif (-not (Test-YesAnswer -Answer $ConfirmRelease -LegacyAccepted @("YES-RELE
 if ($PreconditionsOnly) {
     Say '预检查通过。按测试模式停止，没有创建版本目录。'
     exit 0
+}
+
+try {
+    Test-ReleaseVersionAvailable -Version $Version -ReleaseRoot $ReleaseRoot -ProdRoot $ProdRoot
+}
+catch {
+    Fail $_.Exception.Message
 }
 
 Say '正在执行脚本语法检查。'

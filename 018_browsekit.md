@@ -175,7 +175,7 @@ E:\01_Work\01_PersonalProjects\018-BrowseKit\
 | 顺序 | 入口 | 位置 | 作用 |
 | :--- | :--- | :--- | :--- |
 | 1 | `01_提交GitHub.bat` | 开发目录 | 检查敏感文件后提交并 `git push`。不制作 Release，不发布 Prod。需要已配置 `origin`。公开仓库、提交和推送都只确认 `Y` 或 `N`。 |
-| 2 | `02_制作Release.bat` | 开发目录 | 只接受已经推到 GitHub、且工作区干净的修订。按 `VERSION` 打包到 `E:\01_Work\03_Release\01_Personal\018-BrowseKit\vX.Y.Z`。不安装、不升级 Prod。确认是 `YES-RELEASE`。 |
+| 2 | `02_制作Release.bat` | 开发目录 | 只接受已经推到 GitHub、且工作区干净的修订。自动查看已有 Release 目录和 Prod 版本号，取最大号后补丁加一，打包到新的 `vX.Y.Z` 目录，不覆盖旧版本。不安装、不升级 Prod。确认只按 `Y` 或 `N`。 |
 | 3 | `scripts\03_发布Prod.bat` | Release 包内 | 把该版本复制到 `04_Prod\01_Personal\018-BrowseKit\vX.Y.Z`，停止旧版本后把 `current.txt` 切过去，再启动。不覆盖 `data\`，不使用 `docker compose down -v`。确认是 `YES-PROD`。 |
 
 开发目录只保留 `01_提交GitHub.bat` 和 `02_制作Release.bat`。本地调试直接运行 `scripts\Dev-BrowseKit.ps1`，`-Action up` 启动，`-Action down` 只停开发环境。

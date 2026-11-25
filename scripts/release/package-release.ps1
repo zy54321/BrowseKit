@@ -95,7 +95,9 @@ try {
         Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $stage ('workspace-templates\' + $file.Name))
     }
     if (Test-Path -LiteralPath (Join-Path $RepoRoot '018_browsekit.md')) {
-        Copy-Item (Join-Path $RepoRoot '018_browsekit.md') (Join-Path $stage '018_browsekit.md')
+        $doc = [IO.File]::ReadAllText((Join-Path $RepoRoot '018_browsekit.md'), [Text.Encoding]::UTF8)
+        $doc = [regex]::Replace($doc, '当前版本：v\d+\.\d+\.\d+', ('当前版本：' + $Version))
+        [IO.File]::WriteAllText((Join-Path $stage '018_browsekit.md'), $doc, (New-Object Text.UTF8Encoding $false))
     }
     Copy-Item (Join-Path $RepoRoot 'mcp-host\package.json') (Join-Path $stage 'mcp-host\package.json')
     Copy-Item (Join-Path $RepoRoot 'mcp-host\package-lock.json') (Join-Path $stage 'mcp-host\package-lock.json')
